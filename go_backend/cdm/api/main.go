@@ -16,12 +16,13 @@ import (
 	repository "github.com/GavinHemsada/go-backend/internal/repositories"
 	"github.com/GavinHemsada/go-backend/internal/router"
 	"github.com/GavinHemsada/go-backend/internal/services"
+	"github.com/GavinHemsada/go-backend/internal/websocket"
+	"github.com/redis/go-redis/v9"
 )
 
 func main() {
 	// Load config
 	cfg := config.Load()
-	fmt.Println(cfg.DBUser)
 
 	dsn := fmt.Sprintf(
 		"postgres://%s:%s@%s:%s/%s?sslmode=disable",
@@ -46,15 +47,39 @@ func main() {
 
 	// Initialize repositories
 	userRepo := repository.NewUserRepository(db)
+	roomRepo := repository.NewRoomRepository(db)
+	messageRepo := repository.NewMessageRepository(db)
 
 	// Initialize services
 	userService := services.NewUserService(userRepo, cfg.JWTSecret)
+	roomService := services.NewRoomService(roomRepo)
+	messageService := services.NewMessageService(messageRepo, roomRepo)
 
 	// Initialize handlers
 	userHandler := handlers.NewUserHandler(userService)
+	roomHandler := handlers.NewRoomHandler(roomService)
+	messageHandler := handlers.NewMessageHandler(messageService)
+
+	// Initialize Redis for WebSocket (optional - can work without Redis)
+	var redisClient *redis.Client
+	if cfg.RedisAddr != "" {
+		redisClient = database.NewRedisClient(cfg.RedisAddr, cfg.RedisPassword)
+		if err := database.TestRedisConnection(redisClient); err != nil {
+			log.Printf("Warning: Redis connection failed: %v. WebSocket will work without Redis pub/sub.", err)
+			redisClient = nil
+		} else {
+			log.Println("Redis connected for WebSocket pub/sub")
+		}
+	}
+
+	// Initialize WebSocket handler
+	wsHandler := websocket.NewHandler(messageService, roomService, redisClient)
+	
+	// Start WebSocket hub
+	go wsHandler.GetHub().Run()
 
 	// Setup router
-	r := router.NewRouter(userHandler, cfg.JWTSecret)
+	r := router.NewRouter(userHandler, roomHandler, messageHandler, wsHandler, cfg.JWTSecret)
 
 	// Setup HTTP server
 	port := cfg.ServerPort
