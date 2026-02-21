@@ -3,6 +3,8 @@ package database
 import (
 	"database/sql"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
@@ -22,8 +24,28 @@ func RunMigrations(dsn string) {
 		log.Fatal(err)
 	}
 
+	// Dynamic migration path finding
+	migrationsPath := "migrations" // default
+	searchPaths := []string{
+		"migrations",
+		"../migrations",
+		"../../migrations",
+		"../../../migrations",
+	}
+
+	for _, path := range searchPaths {
+		if _, err := os.Stat(path); err == nil {
+			migrationsPath = path
+			break
+		}
+	}
+
+	log.Printf("Using migrations from: %s", migrationsPath)
+
+	pathToUse := filepath.ToSlash(migrationsPath)
+	
 	m, err := migrate.NewWithDatabaseInstance(
-		"file://migrations",
+		"file://" + pathToUse,
 		"postgres",
 		driver,
 	)
